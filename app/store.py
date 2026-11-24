@@ -79,6 +79,9 @@ class Store:
         body = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode()
         self.s3.put_object(Bucket=self.bucket, Key=key, Body=body, ContentType="application/json")
 
+    def delete(self, key: str) -> None:
+        self.s3.delete_object(Bucket=self.bucket, Key=key)
+
     def head(self, key: str):
         try:
             return self.s3.head_object(Bucket=self.bucket, Key=key)

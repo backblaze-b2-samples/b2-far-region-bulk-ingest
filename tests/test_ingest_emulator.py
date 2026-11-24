@@ -129,6 +129,33 @@ def test_extra_destination_file_blocks_the_marker(bucket, shaped, batch, tmp_pat
     assert not _has(bucket, LAYOUT.marker_key)
 
 
+@pytest.mark.parametrize("extra_file", [False, True])
+def test_verified_batch_rerun(bucket, shaped, batch, tmp_path, extra_file):
+    sh = shaped()
+    endpoint = f"http://127.0.0.1:{sh.port}"
+    before = _snapshot(batch)
+    out = run_cli(*ARGS, "--source", str(batch), "--log-dir", str(tmp_path / "logs"), endpoint=endpoint)
+    assert out.returncode == 0, out.stderr
+    assert _json(bucket, LAYOUT.report_key)["status"] == "verified"
+    assert _has(bucket, LAYOUT.marker_key)
+    landed_before = _keys(bucket, LAYOUT.landing_prefix)
+    if extra_file:
+        bucket.put_object(Bucket=BUCKET, Key=LAYOUT.landing_prefix + "extra.bin", Body=b"extra")
+
+    out = run_cli(*ARGS, "--source", str(batch), "--log-dir", str(tmp_path / "logs"), endpoint=endpoint)
+    assert out.returncode == (1 if extra_file else 0), out.stderr
+    report = _json(bucket, LAYOUT.report_key)
+    assert report["status"] == ("verification_failed" if extra_file else "verified")
+    assert report["complete"] is not extra_file
+    assert report["retries"]["reruns"] == 1
+    assert _has(bucket, LAYOUT.marker_key) is not extra_file
+    landed = _keys(bucket, LAYOUT.landing_prefix)
+    assert set(landed) == set(landed_before) | ({LAYOUT.landing_prefix + "extra.bin"} if extra_file else set())
+    for key, obj in landed_before.items():
+        assert landed[key]["ETag"] == obj["ETag"] and landed[key]["LastModified"] == obj["LastModified"]
+    assert _snapshot(batch) == before
+
+
 def _in_process(emulator, batch, tmp_path):
     settings = Settings.from_env(FAKE_ENV, endpoint_url=f"http://{emulator[0]}:{emulator[1]}")
     from app.store import make_client

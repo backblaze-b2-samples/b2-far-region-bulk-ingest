@@ -58,6 +58,8 @@ B2_ROUNDTRIP ok key=sample-lite/b2-far-region-bulk-ingest/<nonce>/ingest/landing
 
 Everything the demo writes stays under `sample-lite/b2-far-region-bulk-ingest/<nonce>/` (`LITE_NONCE` sets the nonce). `uv run python -m app.demo --keep` leaves the objects in place for inspection; delete them afterwards with your usual tooling, scoped to that prefix. The demo's observations are saved to `.local/verify/demo-evidence.json`.
 
+The evidence records the destination region and tool versions, verified batches, retries and reruns, injected link-shaper drops, and the time from capture to verification. These are observations of that run, with no speed claim.
+
 ## When to use
 
 - Many capture sites push batches into one training corpus, each under its own `--site` prefix.
@@ -67,7 +69,7 @@ Everything the demo writes stays under `sample-lite/b2-far-region-bulk-ingest/<n
 
 ## When not to use
 
-- You need continuous directory mirroring: `rclone sync` or `b2 sync` fit better (this sample never deletes).
+- You need continuous directory mirroring: `rclone sync` or `b2 sync` fit better (ingest never deletes destination batch files).
 - You need to delete source data after upload, replicate across regions or migrate from another provider: out of scope.
 - You want transfer tuning or throughput numbers: the sample makes no speed claims.
 
@@ -77,7 +79,7 @@ Everything the demo writes stays under `sample-lite/b2-far-region-bulk-ingest/<n
 No. It runs with every `B2_*` variable unset, against a local S3 emulator (moto) behind the link shaper, using the pinned rclone from `make setup`. It covers interruption and rerun, manifest agreement, report coverage, missing or extra destination files, checksum mismatches and refusal to write the marker after failed or incomplete verification.
 
 **What makes a batch "verified"?**
-Both `rclone check` and the boto3 manifest comparison pass on the same run. The marker is written after the final report, so a reader that sees the marker can trust the report.
+Both `rclone check` and the boto3 manifest comparison pass on the same run. Any existing marker is removed when a new attempt starts, before copying, and written again only after both checks pass and the final report is saved. A reader that sees the marker can trust that the latest report is verified.
 
 **What happens to my source files?**
 Nothing: they are only read. The wrapper never calls `rclone sync`, `move` or `delete`.

@@ -1,7 +1,7 @@
 [project]
 name = "b2-far-region-bulk-ingest"
 version = "0.1.0"
-description = "A Backblaze B2 sample using boto3 over the S3-compatible API."
+description = "Verifiable batch ingest to Backblaze B2 with rclone, per-batch checksum manifests, reports and verified markers via the S3-compatible API."
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = ["boto3==1.43.115"]

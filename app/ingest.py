@@ -139,6 +139,8 @@ class Ingest:
         attempt = {"started_at": mf.now(), "result": "running"}
         attempts.append(attempt)
         report = self._report(manifest, attempts)
+        if self.store.head(self.layout.marker_key) is not None:
+            self.store.delete(self.layout.marker_key)
         try:
             code = self.copy(attempt)
         except KeyboardInterrupt:
