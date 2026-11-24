@@ -9,8 +9,8 @@ from app import rclone
 from app.redact import redact
 from app.store import Settings
 
-S = Settings("kid-1234567890", "appkey-abcdefghijkl", "my-private-bucket", "us-west-004",
-             "https://s3.us-west-004.backblazeb2.com")
+S = Settings("kid-1234567890", "appkey-abcdefghijkl", "my-private-bucket", "test-region-000",
+             "https://s3.test-region-000.backblazeb2.com")
 
 
 @pytest.fixture()
@@ -44,7 +44,7 @@ def test_config_is_isolated_and_private(session):
     assert session.config.parent == session.dir
     assert stat.S_IMODE(os.stat(session.config).st_mode) == 0o600
     text = session.config.read_text()
-    assert "endpoint = https://s3.us-west-004.backblazeb2.com" in text and "no_check_bucket = true" in text
+    assert "endpoint = https://s3.test-region-000.backblazeb2.com" in text and "no_check_bucket = true" in text
     child = session.env()
     assert child["RCLONE_CONFIG"] == str(session.config) and child["HTTPS_PROXY"] == "http://127.0.0.1:9"
     # Credentials live only in the private config file, never on the command line.

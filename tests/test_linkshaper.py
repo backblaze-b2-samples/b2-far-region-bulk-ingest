@@ -62,7 +62,7 @@ def test_drop_cuts_the_connection_then_recovers(echo_server):
 
 
 def test_connect_mode_refuses_hosts_outside_the_allow_list():
-    with LinkShaper("connect", allowed_hosts=("s3.us-west-004.backblazeb2.com",)) as sh:
+    with LinkShaper("connect", allowed_hosts=("s3.test-region-000.backblazeb2.com",)) as sh:
         with socket.create_connection(("127.0.0.1", sh.port), timeout=5) as c:
             c.sendall(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
             assert c.recv(100).startswith(b"HTTP/1.1 403")
