@@ -1,0 +1,10 @@
+{
+  "name": "b2-far-region-bulk-ingest",
+  "language": "python",
+  "variant": "boto3",
+  "interface": "cli",
+  "required_sdk": "boto3",
+  "user_agent_extra": "b2ai-far-region-bulk-ingest",
+  "main_flow": ["put_object", "get_object", "head_object", "list_objects_v2"],
+  "extra_clients": ["rclone"]
+}

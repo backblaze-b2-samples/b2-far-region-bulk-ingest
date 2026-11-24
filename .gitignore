@@ -1,0 +1,16 @@
+# Secrets and local run state (never committed)
+.env
+.local/
+
+# OS and editor files
+.DS_Store
+*.swp
+
+# Python
+.venv
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+dist/
+build/
