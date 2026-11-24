@@ -22,6 +22,14 @@ B2_ROUNDTRIP ok key=sample-lite/b2-far-region-bulk-ingest/<nonce>/<name> bytes=<
 
 `<nonce>` comes from the `LITE_NONCE` environment variable (a random one is generated when it is unset). `bytes` and `sha256` describe the bytes read back from B2, after checking they equal the bytes written.
 
+## This sample
+
+- `app/cli.py` is the site-side wrapper (`ingest`, `report`); `app/ingest.py` holds the batch steps (manifest, copy, check, comparison, report, marker); `app/rclone.py` is the only place rclone is invoked; `app/manifest.py` hashes sources and compares the destination; `app/linkshaper.py` is the local link shaper; `app/demo.py` is `make demo`.
+- The round-trip key is the multipart payload the ingest actually landed: `sample-lite/b2-far-region-bulk-ingest/<nonce>/ingest/landing/site-a/batch-0001/lidar/sweep-0000.bin`.
+- rclone is the card's declared extra client: pinned to v1.75.2 in `scripts/install_rclone.py` (SHA-256 checked) and installed to `.local/bin/rclone`. Run it only through `RcloneSession.command`, which always adds `--user-agent b2ai-far-region-bulk-ingest` and allows only `copy` and `check`. `tests/test_rclone.py` and `tests/test_ingest_emulator.py` fail if the user agent goes missing.
+- Never delete or move source files, never write the verified marker before both `rclone check` and the manifest comparison pass, and never treat a multipart ETag as an MD5.
+- The demo's cleanup deletes every version of exactly the keys it wrote and aborts unfinished multipart uploads under its own prefix.
+
 ## B2 rules
 
 1. Read configuration only through the five standard names: `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET_NAME`, `B2_REGION`, `B2_PUBLIC_URL_BASE`. Never use other names or aliases for them.
