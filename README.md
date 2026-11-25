@@ -81,7 +81,7 @@ The evidence records the destination region and tool versions, verified batches,
 No. It runs with every `B2_*` variable unset, against a local S3 emulator (moto) behind the link shaper, using the pinned rclone from `make setup`. It covers interruption and rerun, manifest agreement, report coverage, missing or extra destination files, checksum mismatches and refusal to write the marker after failed or incomplete verification.
 
 **What makes a batch "verified"?**
-Both `rclone check` and the boto3 manifest comparison pass on the same run. Any existing marker is removed when a new attempt starts, before copying, and written again only after both checks pass and the final report is saved. A reader that sees the marker can trust that the latest report is verified.
+Both `rclone check` and the boto3 manifest comparison pass on the same run. Any existing marker is removed when a new attempt starts, before copying, and written again only after both checks pass and the final report is saved. A new attempt saves a running, incomplete report before removing the old marker, so readers must confirm both marker presence and a verified report.
 
 **What happens to my source files?**
 Nothing: they are only read. The wrapper never calls `rclone sync`, `move` or `delete`.

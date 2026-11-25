@@ -13,7 +13,7 @@ from app.rclone import RcloneSession
 from app.store import USER_AGENT, Store
 
 
-@pytest.mark.parametrize("status", ["copy_failed", "verification_failed", "verified"])
+@pytest.mark.parametrize("status", ["copy_failed", "verification_failed", "verified", "killed"])
 @mock_aws
 def test_verified_batch_rerun_marker_lifecycle(status, tmp_path, monkeypatch):
     s3 = boto3.client("s3", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="y",
@@ -36,7 +36,8 @@ def test_verified_batch_rerun_marker_lifecycle(status, tmp_path, monkeypatch):
 
     monkeypatch.setattr(job, "copy", first_copy)
     monkeypatch.setattr(job, "check", lambda: {"ok": True})
-    assert job.run()[0] == 0
+    code, verified_report = job.run()
+    assert code == 0
     delete.assert_not_called()
     assert store.head(layout.marker_key) is not None
     if status == "verification_failed":
@@ -45,11 +46,26 @@ def test_verified_batch_rerun_marker_lifecycle(status, tmp_path, monkeypatch):
     marker_during_copy = []
 
     def rerun_copy(attempt):
+        running = store.get_json(layout.report_key)
+        assert running["status"] == "running" and running["complete"] is False
+        assert running["attempts"] == verified_report["attempts"] + [attempt]
+        assert running["attempts"][-1]["result"] == "running"
         marker_during_copy.append(store.head(layout.marker_key))
+        assert marker_during_copy[-1] is None
+        if status == "killed":
+            raise SystemExit(137)
         attempt["result"] = "copy_failed" if status == "copy_failed" else "copied"
         return 1 if status == "copy_failed" else 0
 
     monkeypatch.setattr(job, "copy", rerun_copy)
+    if status == "killed":
+        with pytest.raises(SystemExit) as exc:
+            job.run()
+        assert exc.value.code == 137
+        assert store.get_json(layout.report_key)["status"] == "running"
+        assert store.head(layout.marker_key) is None
+        assert mf.scan_source(source) == before
+        return
     code, report = job.run()
     delete.assert_called_once_with(layout.marker_key)
     assert code == (0 if status == "verified" else 1)

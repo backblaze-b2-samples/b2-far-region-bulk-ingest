@@ -139,6 +139,7 @@ class Ingest:
         attempt = {"started_at": mf.now(), "result": "running"}
         attempts.append(attempt)
         report = self._report(manifest, attempts)
+        self.store.put_json(self.layout.report_key, report)
         if self.store.head(self.layout.marker_key) is not None:
             self.store.delete(self.layout.marker_key)
         try:
