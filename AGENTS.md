@@ -28,7 +28,7 @@ B2_ROUNDTRIP ok key=sample-lite/b2-far-region-bulk-ingest/<nonce>/<name> bytes=<
 - The round-trip key is the multipart payload the ingest actually landed: `sample-lite/b2-far-region-bulk-ingest/<nonce>/ingest/landing/site-a/batch-0001/lidar/sweep-0000.bin`.
 - rclone is the extra client declared in `sample.json`: pinned to v1.75.2 in `scripts/install_rclone.py` (SHA-256 checked) and installed to `.local/bin/rclone`. Run it only through `RcloneSession.command`, which always adds `--user-agent b2ai-far-region-bulk-ingest` and allows only `copy` and `check`. `tests/test_rclone.py` and `tests/test_ingest_emulator.py` fail if the user agent goes missing.
 - Never delete or move source files, never write the verified marker before both `rclone check` and the manifest comparison pass, and never treat a multipart ETag as an MD5.
-- The demo's cleanup deletes every version of exactly the keys it wrote and aborts unfinished multipart uploads under its own prefix.
+- The demo refuses a nonce prefix containing object versions, delete markers or unfinished multipart uploads. Cleanup deletes versions and aborts unfinished uploads only for the exact keys it wrote.
 
 ## B2 rules
 

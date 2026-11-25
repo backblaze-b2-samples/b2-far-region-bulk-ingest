@@ -9,12 +9,15 @@ from app.demo import print_report
 from app.store import Settings
 
 
-@pytest.mark.parametrize("entry", ["Versions", "DeleteMarkers"])
+@pytest.mark.parametrize("entry", ["Versions", "DeleteMarkers", "Uploads"])
 def test_occupied_nonce_prefix_is_refused_before_any_writes(entry, monkeypatch):
     settings = Settings("x", "y", "emulator-bucket", "us-east-1", "https://example.invalid")
     prefix = f"sample-lite/{demo.REPO_NAME}/occupied/"
     client = Mock()
-    client.list_object_versions.return_value = {entry: [{"Key": prefix + "existing", "VersionId": "prior"}]}
+    client.list_object_versions.return_value = (
+        {} if entry == "Uploads" else {entry: [{"Key": prefix + "existing", "VersionId": "prior"}]})
+    client.list_multipart_uploads.return_value = {
+        "Uploads": [{"Key": prefix + "existing", "UploadId": "prior-upload"}]}
     generate = Mock(side_effect=AssertionError("source generation attempted for occupied prefix"))
     monkeypatch.setattr(demo.Settings, "from_env", lambda: settings)
     monkeypatch.setattr(demo, "resolve_nonce", lambda value: "occupied")
@@ -26,7 +29,26 @@ def test_occupied_nonce_prefix_is_refused_before_any_writes(entry, monkeypatch):
 
     generate.assert_not_called()
     client.delete_object.assert_not_called()
-    assert client.mock_calls == [call.list_object_versions(Bucket=settings.bucket, Prefix=prefix, MaxKeys=1)]
+    expected = [call.list_object_versions(Bucket=settings.bucket, Prefix=prefix, MaxKeys=1)]
+    if entry == "Uploads":
+        expected.append(call.list_multipart_uploads(Bucket=settings.bucket, Prefix=prefix, MaxUploads=1))
+    assert client.mock_calls == expected
+
+
+def test_upload_cleanup_aborts_only_written_keys():
+    prefix = f"sample-lite/{demo.REPO_NAME}/cleanup"
+    written = [prefix + "/ingest/landing/owned.bin"]
+    client = Mock()
+    client.list_multipart_uploads.return_value = {"Uploads": [
+        {"Key": written[0], "UploadId": "owned-upload"},
+        {"Key": prefix + "/ingest/landing/unowned.bin", "UploadId": "unowned-upload"},
+    ]}
+
+    assert demo.abort_written_uploads(client, "emulator-bucket", prefix, written) == 1
+
+    client.list_multipart_uploads.assert_called_once_with(Bucket="emulator-bucket", Prefix=prefix + "/")
+    client.abort_multipart_upload.assert_called_once_with(
+        Bucket="emulator-bucket", Key=written[0], UploadId="owned-upload")
 
 
 @pytest.mark.parametrize("failed,low_level,drops", [(0, 0, 2), (1, 3, 0)])

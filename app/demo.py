@@ -70,6 +70,15 @@ def delete_all_versions(s3, bucket: str, key: str) -> int:
     raise DemoError(f"could not remove every version of {key}")
 
 
+def abort_written_uploads(s3, bucket: str, prefix: str, written: list[str]) -> int:
+    """Abort only unfinished uploads for exact keys written by this invocation."""
+    uploads = s3.list_multipart_uploads(Bucket=bucket, Prefix=prefix + "/").get("Uploads", [])
+    owned = [u for u in uploads if u["Key"] in written]
+    for u in owned:
+        s3.abort_multipart_upload(Bucket=bucket, Key=u["Key"], UploadId=u["UploadId"])
+    return len(owned)
+
+
 def print_report(report: dict, evidence: dict) -> None:
     retries = evidence["rerun"]["retries"]
     print("\nTransfer report  " + report["site"] + "/" + report["batch"])
@@ -101,6 +110,8 @@ def run(keep: bool) -> int:
     existing = s3.list_object_versions(Bucket=settings.bucket, Prefix=prefix + "/", MaxKeys=1)
     check(not existing.get("Versions") and not existing.get("DeleteMarkers"),
           "demo nonce prefix is occupied; choose a new LITE_NONCE")
+    uploads = s3.list_multipart_uploads(Bucket=settings.bucket, Prefix=prefix + "/", MaxUploads=1)
+    check(not uploads.get("Uploads"), "demo nonce prefix is occupied; choose a new LITE_NONCE")
     work = REPO_ROOT / ".local" / "demo" / nonce
     source = make_batch(work / SITE / BATCH)
     log_dir = work / "logs"
@@ -197,10 +208,7 @@ def run(keep: bool) -> int:
         shaper.stop()
         evidence["shaper"] = {"drops": shaper.stats.drops, "connections": shaper.stats.connections,
                               "refused": shaper.stats.refused}
-        uploads = s3.list_multipart_uploads(Bucket=settings.bucket, Prefix=prefix + "/").get("Uploads", [])
-        for u in uploads:  # unfinished parts left by the interrupted upload, this run's keys only
-            s3.abort_multipart_upload(Bucket=settings.bucket, Key=u["Key"], UploadId=u["UploadId"])
-        evidence["unfinished_uploads_aborted"] = len(uploads)
+        evidence["unfinished_uploads_aborted"] = abort_written_uploads(s3, settings.bucket, prefix, written)
         if not keep:
             evidence["cleanup_versions_deleted"] = sum(delete_all_versions(s3, settings.bucket, k) for k in written)
             check(not store.list_keys(prefix + "/"), "objects remain under the run prefix after cleanup")
