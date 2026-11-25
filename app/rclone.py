@@ -107,10 +107,10 @@ class RcloneSession:
             "--retries", "3", "--low-level-retries", "10", "--stats", "0", "-vv",
         )
 
-    def popen_copy(self, source: Path, landing_prefix: str, log_path: Path) -> subprocess.Popen:
-        log = open(log_path, "wb")
+    def popen_copy(self, source: Path, landing_prefix: str) -> subprocess.Popen:
         return subprocess.Popen(self.copy_args(source, landing_prefix), env=self.env(),
-                                stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                text=True, errors="replace", bufsize=1)
 
     def check(self, source: Path, landing_prefix: str) -> tuple[Result, list[str]]:
         combined = self.dir / "combined.txt"

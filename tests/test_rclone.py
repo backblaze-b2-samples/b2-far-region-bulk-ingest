@@ -2,12 +2,18 @@
 
 import os
 import stat
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from unittest.mock import Mock
 
 import pytest
 
 from app import rclone
+from app.ingest import Ingest, Layout
 from app.redact import redact
 from app.store import Settings
+from tests.conftest import wait_for
 
 S = Settings("kid-1234567890", "appkey-abcdefghijkl", "my-private-bucket", "test-region-000",
              "https://s3.test-region-000.backblazeb2.com")
@@ -93,3 +99,40 @@ def test_redaction_hides_b2_upload_and_file_ids(session):
     assert redact(f"bucket id={bucket_id}", [bucket_id]) == "bucket id=<redacted>"
     checksum = "a" * 64
     assert session.clean(f"sha256={checksum}") == f"sha256={checksum}"
+
+
+def test_copy_log_is_redacted_while_rclone_is_still_running(session, tmp_path, monkeypatch):
+    upload_id = "4_z" + "0" * 24 + "_f" + "1" * 16
+    fake = rclone.binary()
+    fake.write_text(
+        f"#!{sys.executable}\nimport sys, time\n"
+        f"print('bucket {S.bucket}', flush=True)\n"
+        f"print('upload {upload_id}', file=sys.stderr, flush=True)\n"
+        "time.sleep(30)\n")
+    fake.chmod(0o700)
+    source = tmp_path / "source"
+    source.mkdir()
+    job = Ingest(Layout("site-a", "batch-0001"), source, Mock(), session, tmp_path / "logs")
+    started = Event()
+    processes = []
+    popen = session.popen_copy
+
+    def start(*args):
+        proc = popen(*args)
+        processes.append(proc)
+        started.set()
+        return proc
+
+    monkeypatch.setattr(session, "popen_copy", start)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(job.copy, {})
+        try:
+            assert started.wait(5)
+            log = wait_for(lambda: next(job.log_dir.glob("copy-*.log"), None), timeout=5)
+            wait_for(lambda: len(log.read_text().splitlines()) >= 2, timeout=5)
+            assert processes[0].poll() is None
+            assert log.read_text() == "bucket <redacted>\nupload <redacted>\n"
+        finally:
+            if processes:
+                processes[0].kill()
+            future.result(timeout=5)

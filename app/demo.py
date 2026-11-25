@@ -70,6 +70,15 @@ def delete_all_versions(s3, bucket: str, key: str) -> int:
     raise DemoError(f"could not remove every version of {key}")
 
 
+def abort_written_uploads(s3, bucket: str, prefix: str, written: list[str]) -> int:
+    """Abort only unfinished uploads for exact keys written by this invocation."""
+    uploads = s3.list_multipart_uploads(Bucket=bucket, Prefix=prefix + "/").get("Uploads", [])
+    owned = [u for u in uploads if u["Key"] in written]
+    for u in owned:
+        s3.abort_multipart_upload(Bucket=bucket, Key=u["Key"], UploadId=u["UploadId"])
+    return len(owned)
+
+
 def print_report(report: dict, evidence: dict) -> None:
     retries = evidence["rerun"]["retries"]
     print("\nTransfer report  " + report["site"] + "/" + report["batch"])
@@ -77,16 +86,18 @@ def print_report(report: dict, evidence: dict) -> None:
     print(f"  attempts      {len(report['attempts'])}: " + ", ".join(a["result"] for a in report["attempts"]))
     print(f"  rclone-logged retries  {retries['rclone_attempts_failed']} failed attempt(s),"
           f" {retries['rclone_low_level_retries']} low-level retries")
-    print(f"  link shaper   {retries['link_shaper_drops_injected']} connection drop(s) injected,"
-          f" {retries['link_shaper_drops_recovered']} recovered")
+    print(f"  link shaper   {retries['link_shaper_drops_injected']} connection drop(s) injected")
+    print("  recovery shown by passing rclone check and manifest comparison")
     print(f"  rclone check  {'ok' if report['rclone_check']['ok'] else 'FAILED'}"
           f" ({report['rclone_check']['matched']} matching, {report['rclone_check']['unchecked_hashes']} unchecked)")
     print(f"  manifest      {'ok' if report['manifest_comparison']['ok'] else 'FAILED'}"
           f" (missing {len(report['manifest_comparison']['missing'])},"
           f" extra {len(report['manifest_comparison']['extra'])})")
+    print("  destination verification  md5+size via rclone check and manifest comparison")
     for f in report["files"]:
         mark = "verified" if f["verified"] else "NOT VERIFIED"
-        print(f"  {mark:<12}  {f['path']:<24} {f['size']:>9} B  {f['upload']:<11}  sha256 {f['sha256'][:16]}...")
+        print(f"  {mark:<12}  {f['path']:<24} {f['size']:>9} B  {f['upload']:<11}"
+              f"  source SHA-256 {f['sha256'][:16]}...")
     print(f"  marker        {report['marker_key']}")
 
 
@@ -95,10 +106,15 @@ def run(keep: bool) -> int:
     nonce = resolve_nonce(os.environ.get("LITE_NONCE"))
     prefix = f"sample-lite/{REPO_NAME}/{nonce}"
     layout = Layout(SITE, BATCH, prefix)
+    s3 = make_client(settings)
+    existing = s3.list_object_versions(Bucket=settings.bucket, Prefix=prefix + "/", MaxKeys=1)
+    check(not existing.get("Versions") and not existing.get("DeleteMarkers"),
+          "demo nonce prefix is occupied; choose a new LITE_NONCE")
+    uploads = s3.list_multipart_uploads(Bucket=settings.bucket, Prefix=prefix + "/", MaxUploads=1)
+    check(not uploads.get("Uploads"), "demo nonce prefix is occupied; choose a new LITE_NONCE")
     work = REPO_ROOT / ".local" / "demo" / nonce
     source = make_batch(work / SITE / BATCH)
     log_dir = work / "logs"
-    s3 = make_client(settings)
     store = Store(s3, settings.bucket)
     written = [layout.manifest_key, layout.report_key, layout.marker_key] + [
         layout.landing_prefix + f["path"] for f in mf.scan_source(source)]
@@ -161,8 +177,9 @@ def run(keep: bool) -> int:
         print(f"  {len(listed)} files at the destination, each once; {len(before)} already-landed file(s)"
               " not uploaded again")
         evidence["rerun"] = {"exit": 0, "status": report["status"], "attempts": [a["result"] for a in report["attempts"]],
-                             "retries": {**report["retries"], "link_shaper_drops_injected": shaper.stats.drops,
-                                         "link_shaper_drops_recovered": shaper.stats.drops},
+                             "retries": {**report["retries"], "link_shaper_drops_injected": shaper.stats.drops},
+                             "rclone_check": report["rclone_check"],
+                             "manifest_comparison": report["manifest_comparison"],
                              "files_at_destination": len(listed),
                              "already_landed_not_reuploaded": len(before),
                              "capture_to_verification_seconds": report["capture_to_verification_seconds"]}
@@ -191,10 +208,7 @@ def run(keep: bool) -> int:
         shaper.stop()
         evidence["shaper"] = {"drops": shaper.stats.drops, "connections": shaper.stats.connections,
                               "refused": shaper.stats.refused}
-        uploads = s3.list_multipart_uploads(Bucket=settings.bucket, Prefix=prefix + "/").get("Uploads", [])
-        for u in uploads:  # unfinished parts left by the interrupted upload, this run's keys only
-            s3.abort_multipart_upload(Bucket=settings.bucket, Key=u["Key"], UploadId=u["UploadId"])
-        evidence["unfinished_uploads_aborted"] = len(uploads)
+        evidence["unfinished_uploads_aborted"] = abort_written_uploads(s3, settings.bucket, prefix, written)
         if not keep:
             evidence["cleanup_versions_deleted"] = sum(delete_all_versions(s3, settings.bucket, k) for k in written)
             check(not store.list_keys(prefix + "/"), "objects remain under the run prefix after cleanup")

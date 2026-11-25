@@ -103,23 +103,26 @@ class Ingest:
     def copy(self, attempt: dict) -> int:
         """Step 2: rclone copy --checksum. A rerun only sends what is missing or different."""
         log_path = self.log_dir / f"copy-{int(time.time() * 1000)}.log"
-        proc = self.rclone.popen_copy(self.source, self.layout.landing_prefix, log_path)
-        try:
-            code = proc.wait()
-        except KeyboardInterrupt:
-            proc.terminate()
+        with log_path.open("w", buffering=1) as log:
+            proc = self.rclone.popen_copy(self.source, self.layout.landing_prefix)
             try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            attempt["result"] = "interrupted"
-            raise
-        finally:
-            text = self.rclone.clean(log_path.read_text(errors="replace")).replace(str(self.source), "<source>")
-            log_path.write_text(text)
-            attempt["retries"] = count_retries(text)
-            attempt["rclone_exit"] = proc.returncode
+                for line in proc.stdout:
+                    log.write(self.rclone.clean(line).replace(str(self.source), "<source>"))
+                code = proc.wait()
+            except KeyboardInterrupt:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                attempt["result"] = "interrupted"
+                raise
+            finally:
+                proc.stdout.close()
+                log.flush()
+                attempt["retries"] = count_retries(log_path.read_text())
+                attempt["rclone_exit"] = proc.returncode
         attempt["result"] = "copied" if code == 0 else "copy_failed"
         return code
 

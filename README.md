@@ -41,6 +41,7 @@ The report's `captured_at` is when the batch manifest is first written at the si
 
 ### Checksum behavior
 
+- Per-file `sha256` values in reports and evidence are the source SHA-256 from the manifest. A file marked `verified` passed destination MD5 and size checks via rclone check and the manifest comparison. Only the demo's multipart readback checks destination bytes with SHA-256; other destination files are not read back for SHA-256 verification.
 - Files below 5 MiB upload in one request; their S3 ETag is the MD5 of the file.
 - Larger files upload as multipart (5 MiB parts). Their ETag is **not** the file's MD5 (it ends in `-<parts>`); rclone stores the file's MD5 in the `X-Amz-Meta-Md5chksum` metadata, and the wrapper verifies against that. A multipart object without that metadata fails verification.
 
@@ -48,7 +49,7 @@ The report's `captured_at` is when the batch manifest is first written at the si
 
 - rclone runs only for `copy` and `check`. Each run writes its own rclone config (mode 600) in a temporary directory from the `B2_*` variables and deletes it afterwards; your global rclone config is never read or changed, and credentials never appear on a command line.
 - Every boto3 client sets `Config(user_agent_extra="b2ai-far-region-bulk-ingest")`; every rclone call passes `--user-agent b2ai-far-region-bulk-ingest`.
-- rclone output is captured and redacted (credentials, bucket name, B2 upload/file IDs, signed-URL parameters, local paths) before it is logged or reported.
+- rclone copy output is streamed line by line through redaction (credentials, bucket name, B2 upload/file IDs, signed-URL parameters, local paths) before any log write. A killed wrapper can leave an incomplete log, but raw subprocess output is never written to it.
 
 ### The demo and the link shaper
 
@@ -58,9 +59,9 @@ The report's `captured_at` is when the batch manifest is first written at the si
 B2_ROUNDTRIP ok key=sample-lite/b2-far-region-bulk-ingest/<nonce>/ingest/landing/site-a/batch-0001/lidar/sweep-0000.bin bytes=12582912 sha256=<hex>
 ```
 
-Everything the demo writes stays under `sample-lite/b2-far-region-bulk-ingest/<nonce>/` (`LITE_NONCE` sets the nonce). `uv run python -m app.demo --keep` leaves the objects in place for inspection; delete them afterwards with your usual tooling, scoped to that prefix. The demo's observations are saved to `.local/verify/demo-evidence.json`.
+Everything the demo writes stays under `sample-lite/b2-far-region-bulk-ingest/<nonce>/` (`LITE_NONCE` sets the nonce). Before generating files or uploading, the demo refuses to run if any object version, delete marker or unfinished multipart upload exists under that prefix. Cleanup deletes versions and aborts unfinished uploads only for the exact keys it wrote. Choose a fresh nonce for each invocation. `uv run python -m app.demo --keep` leaves the objects in place for inspection; delete them afterwards with your usual tooling, scoped to that prefix. The demo's observations are saved to `.local/verify/demo-evidence.json`.
 
-The evidence records the destination region and tool versions, verified batches, rclone-logged retries and reruns, link-shaper drops injected and recovered, and `capture_to_verification_seconds`. This clock starts when the batch manifest is first written at the site, when the batch is handed to ingest, rather than when the source data was captured. These are observations of that run, with no speed claim.
+The evidence records the destination region and tool versions, verified batches, rclone-logged retries and reruns, link-shaper drops injected, and `capture_to_verification_seconds`. Recovery is shown by rclone check passing and the manifest comparison succeeding, both recorded under `rerun`; it is not measured as a separate count. This clock starts when the batch manifest is first written at the site, when the batch is handed to ingest, rather than when the source data was captured. These are observations of that run, with no speed claim.
 
 ## When to use
 
@@ -90,7 +91,7 @@ Nothing: they are only read. The wrapper never calls `rclone sync`, `move` or `d
 It gives an independent check of the destination and handles manifests, reports, markers and readback through the S3-compatible API.
 
 **What does a rerun count as?**
-Each `ingest` invocation is an attempt in the report. `rclone_attempts_failed` and `rclone_low_level_retries` count only rclone-logged retries; retries the S3 SDK inside rclone makes silently are not visible there, so these counts can be zero despite recovered connection drops. The demo adds `link_shaper_drops_injected` and `link_shaper_drops_recovered` under `rerun.retries` in its evidence after batch verification succeeds. These count the shaper's injected drops and recovery through successful batch completion, rather than SDK retry attempts.
+Each `ingest` invocation is an attempt in the report. `rclone_attempts_failed` and `rclone_low_level_retries` count only rclone-logged retries; retries the S3 SDK inside rclone makes silently are not visible there, so these counts can be zero despite injected connection drops. The demo records the measured `link_shaper_drops_injected` under `rerun.retries`. Recovery is shown by rclone check passing and the manifest comparison succeeding, rather than an inferred recovery or SDK retry count.
 
 ## License
 
