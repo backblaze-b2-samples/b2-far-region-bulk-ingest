@@ -74,9 +74,22 @@ def test_count_retries():
 
 
 def test_redaction_hides_credentials_bucket_and_signatures(session):
+    signature = "X-Amz-" + "Signature"
+    credential = "X-Amz-" + "Credential"
     text = ("dest:my-private-bucket/x kid-1234567890 appkey-abcdefghijkl "
-            "https://h/o?X-Amz-" "Signature=abc123&X-Amz-" "Credential=zzz Authorization: AWS4 x")
+            f"https://h/o?{signature}=abc123&{credential}=zzz Authorization: AWS4 x")
     out = session.clean(text)
     for secret in ("my-private-bucket", "kid-1234567890", "appkey-abcdefghijkl", "abc123", "zzz", "AWS4"):
         assert secret not in out
     assert redact("plain", [None, ""]) == "plain"
+
+
+def test_redaction_hides_b2_upload_and_file_ids(session):
+    bucket_id = "0" * 24
+    upload_id = f"4_z{bucket_id}_f{'1' * 16}"
+    file_id = upload_id + "_d" + "2" * 8
+    text = f'DEBUG : upload id="{upload_id}"\nDEBUG : file id={file_id}\n'
+    assert session.clean(text) == 'DEBUG : upload id="<redacted>"\nDEBUG : file id=<redacted>\n'
+    assert redact(f"bucket id={bucket_id}", [bucket_id]) == "bucket id=<redacted>"
+    checksum = "a" * 64
+    assert session.clean(f"sha256={checksum}") == f"sha256={checksum}"

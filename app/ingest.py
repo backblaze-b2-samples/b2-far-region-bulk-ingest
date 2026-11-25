@@ -166,6 +166,7 @@ class Ingest:
             return EXIT_FAILED, report
         report.update(status="verified", complete=True, verified_at=mf.now(),
                       marker_key=self.layout.marker_key)
+        # Clock starts when the site writes the batch manifest (handoff to ingest), not data capture.
         report["capture_to_verification_seconds"] = _seconds(manifest["created_at"], report["verified_at"])
         self.store.put_json(self.layout.report_key, self._finish(report, attempts))
         # Step 5: the marker is written last, only after check and comparison both passed.
@@ -176,6 +177,7 @@ class Ingest:
         return EXIT_VERIFIED, report
 
     def _report(self, manifest: dict, attempts: list) -> dict:
+        """captured_at is when the site writes the batch manifest, handing the batch to ingest."""
         return {
             "site": self.layout.site, "batch": self.layout.batch,
             "manifest_key": self.layout.manifest_key, "landing_prefix": self.layout.landing_prefix,

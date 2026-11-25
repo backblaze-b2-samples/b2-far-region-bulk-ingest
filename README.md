@@ -35,7 +35,9 @@ For a batch `<batch>` from site `<site>`, under an optional `--dest-prefix`:
 2. **Copy.** `rclone copy --checksum` uploads to `ingest/landing/<site>/<batch>/`. Files that already match are skipped, so a rerun completes an interrupted batch without uploading anything twice.
 3. **Check.** `rclone check` compares the source with the destination (`--combined` output: matched, missing, extra, differing). A hash rclone could not compare counts as a failure.
 4. **Manifest comparison.** Independently of rclone, `list_objects_v2` and `head_object` confirm that every manifest file is at the destination exactly once, with nothing extra, and that size and MD5 match.
-5. **Report and marker.** `ingest/reports/<site>/<batch>.json` lists every file and whether it was verified, every attempt (interrupted, copied, failed), the retries rclone logged and the capture-to-verification time. Only when steps 3 and 4 both pass is `ingest/reports/<site>/<batch>.verified` written, after the final report.
+5. **Report and marker.** `ingest/reports/<site>/<batch>.json` lists every file and whether it was verified, every attempt (interrupted, copied, failed), rclone-logged retries and the capture-to-verification time. Only when steps 3 and 4 both pass is `ingest/reports/<site>/<batch>.verified` written, after the final report.
+
+The report's `captured_at` is when the batch manifest is first written at the site, when the batch is handed to ingest. `capture_to_verification_seconds` measures from that time to successful verification, including interruptions and reruns. Neither field measures when the source data was originally captured.
 
 ### Checksum behavior
 
@@ -46,7 +48,7 @@ For a batch `<batch>` from site `<site>`, under an optional `--dest-prefix`:
 
 - rclone runs only for `copy` and `check`. Each run writes its own rclone config (mode 600) in a temporary directory from the `B2_*` variables and deletes it afterwards; your global rclone config is never read or changed, and credentials never appear on a command line.
 - Every boto3 client sets `Config(user_agent_extra="b2ai-far-region-bulk-ingest")`; every rclone call passes `--user-agent b2ai-far-region-bulk-ingest`.
-- rclone output is captured and redacted (credentials, bucket name, signed-URL parameters, local paths) before it is logged or reported.
+- rclone output is captured and redacted (credentials, bucket name, B2 upload/file IDs, signed-URL parameters, local paths) before it is logged or reported.
 
 ### The demo and the link shaper
 
@@ -58,7 +60,7 @@ B2_ROUNDTRIP ok key=sample-lite/b2-far-region-bulk-ingest/<nonce>/ingest/landing
 
 Everything the demo writes stays under `sample-lite/b2-far-region-bulk-ingest/<nonce>/` (`LITE_NONCE` sets the nonce). `uv run python -m app.demo --keep` leaves the objects in place for inspection; delete them afterwards with your usual tooling, scoped to that prefix. The demo's observations are saved to `.local/verify/demo-evidence.json`.
 
-The evidence records the destination region and tool versions, verified batches, retries and reruns, injected link-shaper drops, and the time from capture to verification. These are observations of that run, with no speed claim.
+The evidence records the destination region and tool versions, verified batches, rclone-logged retries and reruns, link-shaper drops injected and recovered, and `capture_to_verification_seconds`. This clock starts when the batch manifest is first written at the site, when the batch is handed to ingest, rather than when the source data was captured. These are observations of that run, with no speed claim.
 
 ## When to use
 
@@ -88,7 +90,7 @@ Nothing: they are only read. The wrapper never calls `rclone sync`, `move` or `d
 It gives an independent check of the destination and handles manifests, reports, markers and readback through the S3-compatible API.
 
 **What does a rerun count as?**
-Each `ingest` invocation is an attempt in the report. rclone's own retries are counted from its log; retries the S3 SDK inside rclone makes silently are not visible there.
+Each `ingest` invocation is an attempt in the report. `rclone_attempts_failed` and `rclone_low_level_retries` count only rclone-logged retries; retries the S3 SDK inside rclone makes silently are not visible there, so these counts can be zero despite recovered connection drops. The demo adds `link_shaper_drops_injected` and `link_shaper_drops_recovered` under `rerun.retries` in its evidence after batch verification succeeds. These count the shaper's injected drops and recovery through successful batch completion, rather than SDK retry attempts.
 
 ## License
 

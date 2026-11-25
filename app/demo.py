@@ -71,10 +71,14 @@ def delete_all_versions(s3, bucket: str, key: str) -> int:
 
 
 def print_report(report: dict, evidence: dict) -> None:
+    retries = evidence["rerun"]["retries"]
     print("\nTransfer report  " + report["site"] + "/" + report["batch"])
     print(f"  status        {report['status']}  (complete={str(report['complete']).lower()})")
     print(f"  attempts      {len(report['attempts'])}: " + ", ".join(a["result"] for a in report["attempts"]))
-    print(f"  link shaper   {evidence['shaper']['drops']} connection drop(s) injected and recovered")
+    print(f"  rclone-logged retries  {retries['rclone_attempts_failed']} failed attempt(s),"
+          f" {retries['rclone_low_level_retries']} low-level retries")
+    print(f"  link shaper   {retries['link_shaper_drops_injected']} connection drop(s) injected,"
+          f" {retries['link_shaper_drops_recovered']} recovered")
     print(f"  rclone check  {'ok' if report['rclone_check']['ok'] else 'FAILED'}"
           f" ({report['rclone_check']['matched']} matching, {report['rclone_check']['unchecked_hashes']} unchecked)")
     print(f"  manifest      {'ok' if report['manifest_comparison']['ok'] else 'FAILED'}"
@@ -157,7 +161,9 @@ def run(keep: bool) -> int:
         print(f"  {len(listed)} files at the destination, each once; {len(before)} already-landed file(s)"
               " not uploaded again")
         evidence["rerun"] = {"exit": 0, "status": report["status"], "attempts": [a["result"] for a in report["attempts"]],
-                             "retries": report["retries"], "files_at_destination": len(listed),
+                             "retries": {**report["retries"], "link_shaper_drops_injected": shaper.stats.drops,
+                                         "link_shaper_drops_recovered": shaper.stats.drops},
+                             "files_at_destination": len(listed),
                              "already_landed_not_reuploaded": len(before),
                              "capture_to_verification_seconds": report["capture_to_verification_seconds"]}
 
