@@ -16,7 +16,6 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
 
@@ -70,11 +69,6 @@ class Layout:
 
 def tools() -> dict:
     return {"rclone": RCLONE_VERSION, "boto3": version("boto3"), "python": platform.python_version()}
-
-
-def _seconds(a: str, b: str) -> float:
-    fmt = "%Y-%m-%dT%H:%M:%S.%fZ"
-    return round((datetime.strptime(b, fmt) - datetime.strptime(a, fmt)).total_seconds(), 3)
 
 
 class Ingest:
@@ -158,11 +152,12 @@ class Ingest:
             self.store.put_json(self.layout.report_key, self._finish(report, attempts))
             return EXIT_FAILED, report
         check = self.check()
-        comparison = mf.compare(manifest, self.layout.landing_prefix, self.store)
+        comparison = mf.compare(manifest, self.layout.landing_prefix, self.store, workers=8)
         attempt["ended_at"] = mf.now()
         report["rclone_check"] = check
         report["manifest_comparison"] = {k: comparison[k] for k in ("ok", "missing", "extra", "mismatched")}
         report["files"] = comparison["files"]
+        report["counts"] = comparison["counts"]
         verified = check["ok"] and comparison["ok"]
         if not verified:
             report.update(status="verification_failed", complete=False)
@@ -170,8 +165,6 @@ class Ingest:
             return EXIT_FAILED, report
         report.update(status="verified", complete=True, verified_at=mf.now(),
                       marker_key=self.layout.marker_key)
-        # Clock starts when the site writes the batch manifest (handoff to ingest), not data capture.
-        report["capture_to_verification_seconds"] = _seconds(manifest["created_at"], report["verified_at"])
         self.store.put_json(self.layout.report_key, self._finish(report, attempts))
         # Step 5: the marker is written last, only after check and comparison both passed.
         self.store.put_json(self.layout.marker_key, {

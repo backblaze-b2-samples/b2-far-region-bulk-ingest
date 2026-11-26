@@ -90,3 +90,43 @@ def test_scan_source_is_read_only_and_complete(tmp_path):
 def test_empty_batch_is_refused(tmp_path):
     with pytest.raises(RuntimeError):
         mf.scan_source(tmp_path)
+
+
+def test_counts_include_duplicate_raw_listing_entries_across_pages():
+    client = _client()
+    stub = Stubber(client)
+    f = _entry("a.bin", b"a")
+    obj = {"Key": PREFIX + "a.bin", "Size": 1}
+    stub.add_response("list_objects_v2", {"Contents": [obj], "IsTruncated": True,
+                                         "NextContinuationToken": "next"}, {"Bucket": "b", "Prefix": PREFIX})
+    stub.add_response("list_objects_v2", {"Contents": [obj], "IsTruncated": False},
+                      {"Bucket": "b", "Prefix": PREFIX, "ContinuationToken": "next"})
+    stub.add_response("head_object", {"ContentLength": 1, "ETag": f['md5']},
+                      {"Bucket": "b", "Key": obj["Key"]})
+    with stub:
+        out = mf.compare({"files": [f, _entry("missing.bin", b"m")]}, PREFIX, Store(client, "b"))
+        stub.assert_no_pending_responses()
+    assert out["counts"] == {"expected": 2, "verified": 1, "missing": 1, "duplicates": 1}
+    assert not out["ok"]
+
+
+def test_parallel_comparison_preserves_sorted_results_and_counts():
+    files = [_entry("z.bin", b"z"), _entry("a.bin", b"a"), _entry("missing.bin", b"m")]
+
+    class FakeStore:
+        def list_entries(self, prefix):
+            return [{"Key": prefix + p, "Size": 1} for p in ("z.bin", "a.bin", "a.bin", "extra.bin")]
+
+        def head(self, key):
+            return {"ContentLength": 1, "ETag": next(f["md5"] for f in files if key.endswith(f["path"]))}
+
+    sequential = mf.compare({"files": files}, PREFIX, FakeStore())
+    parallel = mf.compare({"files": files}, PREFIX, FakeStore(), workers=8)
+    assert parallel == sequential
+    assert [f["path"] for f in parallel["files"]] == ["a.bin", "missing.bin", "z.bin"]
+    assert parallel["counts"] == {"expected": 3, "verified": 2, "missing": 1, "duplicates": 1}
+    assert parallel["extra"] == ["extra.bin"]
+
+
+def test_seconds_is_public():
+    assert mf.seconds("2026-01-01T00:00:00.000000Z", "2026-01-01T00:01:02.500000Z") == 62.5

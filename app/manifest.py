@@ -12,12 +12,20 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def seconds(a: str, b: str) -> float:
+    """Elapsed seconds between manifest/report UTC timestamps."""
+    fmt = "%Y-%m-%dT%H:%M:%S.%fZ"
+    return round((datetime.strptime(b, fmt) - datetime.strptime(a, fmt)).total_seconds(), 3)
 
 
 def hash_file(path: Path) -> tuple[int, str, str]:
@@ -72,15 +80,17 @@ def destination_md5(head: dict) -> tuple[str | None, str]:
     return None, "unrecognised etag"
 
 
-def compare(manifest: dict, landing_prefix: str, store) -> dict:
+def compare(manifest: dict, landing_prefix: str, store, workers: int = 1) -> dict:
     """Compares the manifest with what is at the destination: every file present once,
     no extra keys, sizes and MD5s equal."""
-    listed = store.list_keys(landing_prefix)
+    listed = Counter(obj["Key"] for obj in store.list_entries(landing_prefix))
+    duplicates = sum(n - 1 for n in listed.values())
     expected = {landing_prefix + f["path"]: f for f in manifest["files"]}
     missing = sorted(k[len(landing_prefix):] for k in expected if k not in listed)
     extra = sorted(k[len(landing_prefix):] for k in listed if k not in expected)
-    results = []
-    for key, f in sorted(expected.items()):
+
+    def compare_key(item):
+        key, f = item
         row = {"path": f["path"], "size": f["size"], "sha256": f["sha256"], "verified": False}
         if key in listed:
             head = store.head(key)
@@ -99,8 +109,17 @@ def compare(manifest: dict, landing_prefix: str, store) -> dict:
                 row["verified"] = True
         else:
             row["problem"] = "missing at destination"
-        results.append(row)
-    ok = not missing and not extra and all(r["verified"] for r in results)
+        return row
+
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(compare_key, sorted(expected.items())))
+    else:
+        results = list(map(compare_key, sorted(expected.items())))
+    counts = {"expected": len(expected), "verified": sum(r["verified"] for r in results),
+              "missing": len(missing), "duplicates": duplicates}
+    ok = not missing and not extra and not duplicates and all(r["verified"] for r in results)
     return {"ok": ok, "missing": missing, "extra": extra,
+            "counts": counts,
             "mismatched": [r["path"] for r in results if r.get("problem") and r["path"] not in missing],
             "files": results}

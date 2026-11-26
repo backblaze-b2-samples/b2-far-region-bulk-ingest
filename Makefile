@@ -13,4 +13,4 @@ test:
 	env $(addprefix -u ,$(B2_VARS)) uv run --frozen pytest -q
 
 demo:
-	@$(LOAD_ENV) uv run --frozen python -m app.demo
+	@$(LOAD_ENV) $(if $(filter command line,$(origin SCALE)),SCALE='$(subst ','"'"',$(SCALE))') uv run --frozen python -m app.demo

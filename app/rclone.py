@@ -103,7 +103,7 @@ class RcloneSession:
     def copy_args(self, source: Path, landing_prefix: str) -> list[str]:
         return self.command(
             "copy", str(source), self.remote(landing_prefix),
-            "--checksum", "--transfers", "2", "--order-by", "size,ascending",
+            "--checksum", "--transfers", "2", "--order-by", "size,ascending", "--check-first",
             "--retries", "3", "--low-level-retries", "10", "--stats", "0", "-vv",
         )
 

@@ -62,6 +62,9 @@ def test_verified_batch_through_a_dropping_link(bucket, shaped, batch, tmp_path)
     report = _json(bucket, LAYOUT.report_key)
     manifest = _json(bucket, LAYOUT.manifest_key)
     assert report["complete"] and report["status"] == "verified"
+    assert report["counts"] == {"expected": len(manifest["files"]), "verified": len(manifest["files"]),
+                                "missing": 0, "duplicates": 0}
+    assert "capture_to_verification_seconds" not in report
     assert report["rclone_check"]["ok"] and report["manifest_comparison"]["ok"]
     assert sorted(f["path"] for f in report["files"]) == sorted(f["path"] for f in manifest["files"])
     assert all(f["verified"] for f in report["files"])

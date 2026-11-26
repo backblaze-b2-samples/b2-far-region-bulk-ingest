@@ -12,8 +12,13 @@ Prerequisites: Python 3.11+, [uv](https://docs.astral.sh/uv/), macOS or Linux (a
 make setup             # Python deps + pinned rclone v1.75.2 into .local/bin (checksum-verified)
 make test              # offline: local S3 emulator behind the link shaper, no B2 credentials
 cp .env.example .env   # then fill in your B2 values
-make demo              # the real workflow against your bucket, through the local link shaper
+make demo              # the real workflow through the local link shaper, using configured SCALE
+make demo SCALE=large  # thousands of files and a few GB generated locally and uploaded
 ```
+
+The default scale is `default`. `large` needs several GB of free disk space and takes much longer.
+Command-line `SCALE` wins over `.env`, then the caller's environment; unset or empty uses `default`.
+Any other `SCALE` value is an error, checked before B2 configuration or access.
 
 Ingest your own batch:
 
@@ -35,9 +40,9 @@ For a batch `<batch>` from site `<site>`, under an optional `--dest-prefix`:
 2. **Copy.** `rclone copy --checksum` uploads to `ingest/landing/<site>/<batch>/`. Files that already match are skipped, so a rerun completes an interrupted batch without uploading anything twice.
 3. **Check.** `rclone check` compares the source with the destination (`--combined` output: matched, missing, extra, differing). A hash rclone could not compare counts as a failure.
 4. **Manifest comparison.** Independently of rclone, `list_objects_v2` and `head_object` confirm that every manifest file is at the destination exactly once, with nothing extra, and that size and MD5 match.
-5. **Report and marker.** `ingest/reports/<site>/<batch>.json` lists every file and whether it was verified, every attempt (interrupted, copied, failed), rclone-logged retries and the capture-to-verification time. Only when steps 3 and 4 both pass is `ingest/reports/<site>/<batch>.verified` written, after the final report.
+5. **Report and marker.** `ingest/reports/<site>/<batch>.json` lists every file and whether it was verified, counts (`expected`, `verified`, `missing`, `duplicates`), every attempt (interrupted, copied, failed), retries, `captured_at` and `verified_at`. Counts come from the manifest comparison; duplicate destination listing entries are counted before keys are deduplicated, while unexpected keys remain listed as `extra`. Only when steps 3 and 4 both pass is `ingest/reports/<site>/<batch>.verified` written, after the final report.
 
-The report's `captured_at` is when the batch manifest is first written at the site, when the batch is handed to ingest. `capture_to_verification_seconds` measures from that time to successful verification, including interruptions and reruns. Neither field measures when the source data was originally captured.
+The report's `captured_at` is when the batch manifest is first written at the site, when the batch is handed to ingest. `verified_at` records successful verification. The demo computes `capture_to_verification_seconds` from these timestamps and saves it only in demo evidence, including interruptions and reruns. These timestamps do not measure when the source data was originally captured.
 
 ### Checksum behavior
 
@@ -53,15 +58,39 @@ The report's `captured_at` is when the batch manifest is first written at the si
 
 ### The demo and the link shaper
 
-`make demo` generates a three-file batch (two single-part files, one 12 MiB multipart file) and starts `app/linkshaper.py`, a local HTTP CONNECT proxy that adds latency, caps bandwidth and drops connections. rclone reaches B2 through it with TLS intact. The demo interrupts the wrapper once the first file lands, checks that the batch is reported as interrupted with no marker, reruns it, checks completion (every file once, already-landed files not re-uploaded, both checks passed, marker after report), reads the multipart file back with `boto3` and compares bytes and SHA-256 with the source, then deletes exactly the object versions it wrote and prints:
+Both scales generate deterministic telemetry CSV and lidar payloads across three sites. The interruption point is random per run:
+
+| Scale | Sites and batches | Files | Multipart payloads | Interrupted batches |
+|---|---|---|---|---|
+| `default` | site-a: 2 batches; site-b and site-c: 1 each | 185 total; 32, 48, 40, 56 telemetry files per batch | 2, 2, 2, 3 files of 6 MiB | All 4 |
+| `large` | 2 batches per site, 6 total | 3,144 total; 520 telemetry files per batch | 4 files of 100 MiB per batch | 2 randomly chosen |
+
+Default generates roughly 60 MiB; large generates a few GB. Telemetry files range from a few KiB to about 100 KiB. Generated files remain locally under `.local/demo/<nonce>/<scale>/` after remote cleanup. Separate scale directories prevent source files from a previous large run entering a default run when reusing an emptied nonce prefix.
+
+The demo starts one `app/linkshaper.py` HTTP CONNECT proxy for the whole run. It is configured with latency, a bandwidth cap and connection drops: default uses 120 ms latency and up to 2 drops after 4 MiB; large uses lower latency, a raised cap and up to 4 drops after 4 MiB. rclone reaches B2 through it with TLS intact. Batches run sequentially.
+
+For each selected batch, the demo polls uploaded traffic through the shaper and interrupts the wrapper at a uniformly chosen byte count within 20% to 70% of that batch's payload. It checks for an `interrupted`, incomplete report, fewer landed files than the manifest (possibly zero), and no verified marker. It then reruns the same command. Other batches run once. Every batch must finish verified: all files present exactly once, both checks passed, marker after the report, and already-landed files retaining their ETag and VersionId. A paginated version listing also checks that each landing key has exactly one stored version.
+
+Expected transfer report counts for default (rclone-logged retries shown as `failed, low-level`):
+
+```text
+site/batch           expected verified missing duplicates attempts failed, low-level
+site-a/batch-0001          34       34       0          0        2      0,         0
+site-a/batch-0002          50       50       0          0        2      0,         0
+site-b/batch-0001          42       42       0          0        2      0,         0
+site-c/batch-0001          59       59       0          0        2      0,         0
+Totals: expected 185, verified 185, missing 0, duplicates 0, reruns 4
+```
+
+Retry counts vary by run. The demo reads back the largest multipart file with `boto3` (ties ordered by site, batch, path), compares its bytes and SHA-256 with the source and manifest, deletes exactly the object versions it wrote, and ends with exactly one round-trip line:
 
 ```
-B2_ROUNDTRIP ok key=sample-lite/b2-far-region-bulk-ingest/<nonce>/ingest/landing/site-a/batch-0001/lidar/sweep-0000.bin bytes=12582912 sha256=<hex>
+B2_ROUNDTRIP ok key=sample-lite/b2-far-region-bulk-ingest/<nonce>/ingest/landing/<site>/<batch>/lidar/sweep-NNNN.bin bytes=<n> sha256=<64 lowercase hex>
 ```
 
-Everything the demo writes stays under `sample-lite/b2-far-region-bulk-ingest/<nonce>/` (`LITE_NONCE` sets the nonce). Before generating files or uploading, the demo refuses to run if any object version, delete marker or unfinished multipart upload exists under that prefix. Cleanup deletes versions and aborts unfinished uploads only for the exact keys it wrote. Choose a fresh nonce for each invocation. `uv run python -m app.demo --keep` leaves the objects in place for inspection; delete them afterwards with your usual tooling, scoped to that prefix. The demo's observations are saved to `.local/verify/demo-evidence.json`.
+Everything the demo writes stays under `sample-lite/b2-far-region-bulk-ingest/<nonce>/` (`LITE_NONCE` sets the nonce). Before generating files or uploading, the demo refuses to run if any object version, delete marker or unfinished multipart upload exists under that prefix. Cleanup pages versions and delete markers under that prefix, deletes only exact written keys by VersionId using individual `delete_object` calls, and verifies the prefix is empty. Unfinished uploads are aborted only for exact written keys. Choose a fresh nonce for each invocation. `uv run python -m app.demo --keep` leaves the objects in place for inspection; delete them afterwards with your usual tooling, scoped to that prefix.
 
-The evidence records the destination region and tool versions, verified batches, rclone-logged retries and reruns, link-shaper drops injected, and `capture_to_verification_seconds`. Recovery is shown by rclone check passing and the manifest comparison succeeding, both recorded under `rerun`; it is not measured as a separate count. This clock starts when the batch manifest is first written at the site, when the batch is handed to ingest, rather than when the source data was captured. These are observations of that run, with no speed claim.
+Evidence is saved in `.local/verify/demo-evidence.json` for default and `.local/verify/demo-evidence-large.json` for large, including failures after prefix validation. It records the region, tools, scale, shaping configuration (bandwidth label only), random seed and per-batch cut (fraction, target bytes, observed shaper bytes and landed files), counts, attempts, retries, both checks, and files preserved on rerun. It also records `capture_to_verification_seconds` per batch and its sum/max, destination keys and sizes, multipart readback, shaper drops/connections/refusals, aborted uploads and deleted versions. Recovery is shown by passing rclone check and manifest comparison. The timing starts at manifest handoff to ingest; it is an observation of that run with no speed claim, and appears only in evidence, never stdout or transfer reports.
 
 ## When to use
 
@@ -91,7 +120,7 @@ Nothing: they are only read. The wrapper never calls `rclone sync`, `move` or `d
 It gives an independent check of the destination and handles manifests, reports, markers and readback through the S3-compatible API.
 
 **What does a rerun count as?**
-Each `ingest` invocation is an attempt in the report. `rclone_attempts_failed` and `rclone_low_level_retries` count only rclone-logged retries; retries the S3 SDK inside rclone makes silently are not visible there, so these counts can be zero despite injected connection drops. The demo records the measured `link_shaper_drops_injected` under `rerun.retries`. Recovery is shown by rclone check passing and the manifest comparison succeeding, rather than an inferred recovery or SDK retry count.
+Each `ingest` invocation is an attempt in the report; `retries.reruns` counts invocations after the first. Default interrupts and reruns all four batches; large interrupts two randomly chosen batches and runs the other four once. The source content stays deterministic while the cut point changes per run. `rclone_attempts_failed` and `rclone_low_level_retries` count only rclone-logged retries; retries the S3 SDK inside rclone makes silently are not visible there, so these counts can be zero despite injected drops. Demo evidence records retries per batch and `link_shaper_drops_injected` in totals. Recovery is shown by rclone check passing and manifest comparison succeeding, with already-landed files retaining their ETag and VersionId.
 
 ## License
 
