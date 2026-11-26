@@ -92,17 +92,19 @@ class Store:
 
     def list_keys(self, prefix: str) -> dict[str, int]:
         """Every key under prefix with its size (paginated list_objects_v2)."""
-        out: dict[str, int] = {}
+        return {obj["Key"]: obj["Size"] for obj in self.list_entries(prefix)}
+
+    def list_entries(self, prefix: str):
+        """Raw paginated entries, preserving repeated keys for duplicate detection."""
         token = None
         while True:
             kw = {"Bucket": self.bucket, "Prefix": prefix}
             if token:
                 kw["ContinuationToken"] = token
             page = self.s3.list_objects_v2(**kw)
-            for obj in page.get("Contents", []):
-                out[obj["Key"]] = obj["Size"]
+            yield from page.get("Contents", [])
             if not page.get("IsTruncated"):
-                return out
+                return
             token = page["NextContinuationToken"]
 
     def get_bytes(self, key: str) -> bytes:

@@ -38,6 +38,9 @@ def test_verified_batch_rerun_marker_lifecycle(status, tmp_path, monkeypatch):
     monkeypatch.setattr(job, "check", lambda: {"ok": True})
     code, verified_report = job.run()
     assert code == 0
+    assert verified_report["counts"] == {"expected": 1, "verified": 1, "missing": 0, "duplicates": 0}
+    assert "capture_to_verification_seconds" not in verified_report
+    assert verified_report["captured_at"] <= verified_report["verified_at"]
     delete.assert_not_called()
     assert store.head(layout.marker_key) is not None
     if status == "verification_failed":
