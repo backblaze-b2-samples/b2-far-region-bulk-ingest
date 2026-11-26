@@ -100,6 +100,39 @@ def test_invalid_scale_precedes_credentials_and_storage(monkeypatch, capsys):
     access.assert_not_called()
 
 
+def test_transfer_table_columns_align(capsys):
+    evidence = demo.new_evidence("test", "sample-lite/test", "test-region", resolve_scale("default"), 123)
+    evidence["batches"] = evidence["batches"][:2]
+    for batch, counts, retries in zip(evidence["batches"], [(34, 34, 0, 0), (524, 500, 24, 2)], [(1, 23), (12, 3)]):
+        batch["counts"] = dict(zip(("expected", "verified", "missing", "duplicates"), counts))
+        batch["attempts"] = ["interrupted", "copied"]
+        batch["retries"] = {"rclone_attempts_failed": retries[0], "rclone_low_level_retries": retries[1]}
+    print_report(evidence)
+    lines = capsys.readouterr().out.splitlines()
+    start = lines.index("Transfer report") + 1
+    table = lines[start:start + 3]
+    assert all(len(line) < 100 for line in table)
+    assert len(set(map(len, table))) == 1
+    # Check fixed column boundaries independently of the production formatter.
+    expected = [
+        ["site/batch", "expected", "verified", "missing", "duplicates", "attempts", "failed", "low-level"],
+        ["site-a/batch-0001", "34", "34", "0", "0", "2", "1", "23"],
+        ["site-a/batch-0002", "524", "500", "24", "2", "2", "12", "3"],
+    ]
+    for line, cells in zip(table, expected):
+        widths = (20, 8, 8, 7, 10, 8, 6, 9)
+        offset = 0
+        for index, (width, cell) in enumerate(zip(widths, cells)):
+            part = line[offset:offset + width]
+            assert part.strip() == cell
+            assert part == (cell.ljust(width) if index == 0 else cell.rjust(width))
+            offset += width
+            separator = ", " if index == 6 else " "
+            if index < len(cells) - 1:
+                assert line[offset:offset + len(separator)] == separator
+                offset += len(separator)
+
+
 def test_evidence_shaping_labels_and_cut_record():
     for name, label in (("default", "standard"), ("large", "raised")):
         scale = resolve_scale(name)

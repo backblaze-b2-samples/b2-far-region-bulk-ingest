@@ -12,11 +12,12 @@ Prerequisites: Python 3.11+, [uv](https://docs.astral.sh/uv/), macOS or Linux (a
 make setup             # Python deps + pinned rclone v1.75.2 into .local/bin (checksum-verified)
 make test              # offline: local S3 emulator behind the link shaper, no B2 credentials
 cp .env.example .env   # then fill in your B2 values
-make demo              # default scale: the real workflow through the local link shaper
+make demo              # the real workflow through the local link shaper, using configured SCALE
 make demo SCALE=large  # thousands of files and a few GB generated locally and uploaded
 ```
 
 The default scale is `default`. `large` needs several GB of free disk space and takes much longer.
+Command-line `SCALE` wins over `.env`, then the caller's environment; unset or empty uses `default`.
 Any other `SCALE` value is an error, checked before B2 configuration or access.
 
 Ingest your own batch:
@@ -70,18 +71,18 @@ The demo starts one `app/linkshaper.py` HTTP CONNECT proxy for the whole run. It
 
 For each selected batch, the demo polls uploaded traffic through the shaper and interrupts the wrapper at a uniformly chosen byte count within 20% to 70% of that batch's payload. It checks for an `interrupted`, incomplete report, fewer landed files than the manifest (possibly zero), and no verified marker. It then reruns the same command. Other batches run once. Every batch must finish verified: all files present exactly once, both checks passed, marker after the report, and already-landed files retaining their ETag and VersionId. A paginated version listing also checks that each landing key has exactly one stored version.
 
-Expected transfer report counts for default:
+Expected transfer report counts for default (rclone-logged retries shown as `failed, low-level`):
 
 ```text
-site/batch          expected verified missing duplicates attempts
-site-a/batch-0001         34       34       0          0        2
-site-a/batch-0002         50       50       0          0        2
-site-b/batch-0001         42       42       0          0        2
-site-c/batch-0001         59       59       0          0        2
+site/batch           expected verified missing duplicates attempts failed, low-level
+site-a/batch-0001          34       34       0          0        2      0,         0
+site-a/batch-0002          50       50       0          0        2      0,         0
+site-b/batch-0001          42       42       0          0        2      0,         0
+site-c/batch-0001          59       59       0          0        2      0,         0
 Totals: expected 185, verified 185, missing 0, duplicates 0, reruns 4
 ```
 
-The actual table also includes rclone-logged retry counts. The demo reads back the largest multipart file with `boto3` (ties ordered by site, batch, path), compares its bytes and SHA-256 with the source and manifest, deletes exactly the object versions it wrote, and ends with exactly one round-trip line:
+Retry counts vary by run. The demo reads back the largest multipart file with `boto3` (ties ordered by site, batch, path), compares its bytes and SHA-256 with the source and manifest, deletes exactly the object versions it wrote, and ends with exactly one round-trip line:
 
 ```
 B2_ROUNDTRIP ok key=sample-lite/b2-far-region-bulk-ingest/<nonce>/ingest/landing/<site>/<batch>/lidar/sweep-NNNN.bin bytes=<n> sha256=<64 lowercase hex>

@@ -46,6 +46,15 @@ def test_copy_never_deletes_or_moves_source(session, tmp_path):
     assert not any(a.startswith(("--delete", "--remove", "--move")) for a in args)
 
 
+def test_copy_checks_all_files_before_ordering_uploads(session, tmp_path):
+    args = session.copy_args(tmp_path, "ingest/landing/s/b/")
+    assert args[args.index("--checksum"):] == [
+        "--checksum", "--transfers", "2", "--order-by", "size,ascending", "--check-first",
+        "--retries", "3", "--low-level-retries", "10", "--stats", "0", "-vv",
+        "--config", str(session.config), "--user-agent", "b2ai-far-region-bulk-ingest",
+        "--s3-upload-cutoff", "5Mi", "--s3-chunk-size", "5Mi"]
+
+
 def test_config_is_isolated_and_private(session):
     assert session.config.parent == session.dir
     assert stat.S_IMODE(os.stat(session.config).st_mode) == 0o600

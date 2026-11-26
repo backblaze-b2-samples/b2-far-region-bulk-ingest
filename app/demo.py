@@ -148,12 +148,13 @@ def print_batch(batch: dict) -> None:
 
 def print_report(evidence: dict) -> None:
     print("\nTransfer report")
-    print("site/batch            expected verified missing duplicates attempts  rclone-logged retries (failed, low-level)")
+    row = "{:<20} {:>8} {:>8} {:>7} {:>10} {:>8} {:>6}, {:>9}"
+    print(row.format("site/batch", "expected", "verified", "missing", "duplicates", "attempts", "failed", "low-level"))
     for b in evidence["batches"]:
         c, r = b["counts"], b["retries"]
-        print(f"{b['site']}/{b['batch']:<10} {c['expected']:>8} {c['verified']:>8} {c['missing']:>7}"
-              f" {c['duplicates']:>10} {len(b['attempts']):>8}"
-              f" {r.get('rclone_attempts_failed', 0):>7}, {r.get('rclone_low_level_retries', 0)}")
+        print(row.format(f"{b['site']}/{b['batch']}", c["expected"], c["verified"], c["missing"],
+                         c["duplicates"], len(b["attempts"]), r.get("rclone_attempts_failed", 0),
+                         r.get("rclone_low_level_retries", 0)))
     t = totals(evidence)
     print(f"Totals: expected {t['expected']}, verified {t['verified']}, missing {t['missing']},"
           f" duplicates {t['duplicates']}, reruns {t['reruns']}")
