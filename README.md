@@ -29,6 +29,7 @@ uv run python -m app.cli report --site site-a --batch batch-0042
 ```
 
 Rerun the same `ingest` command after an interruption: rclone sends only what is missing, and the batch is marked verified only when everything checks out.
+Each copy prints its log path and a `tail -f` command to follow it; CLI logs are under `.local/logs/` by default (`--log-dir` changes it).
 
 ![make demo output](docs/images/demo.png)
 

@@ -167,7 +167,7 @@ def print_report(evidence: dict) -> None:
 def interrupt_wrapper(command: list[str], shaper, target: int) -> tuple[int, int]:
     """Poll traffic since this wrapper started, without listing destination objects."""
     start_bytes = shaper.stats.bytes_up
-    proc = subprocess.Popen(command, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(command, cwd=REPO_ROOT, stdout=subprocess.PIPE, text=True)
     deadline = time.monotonic() + 7200
     try:
         while shaper.stats.bytes_up - start_bytes < target:
@@ -271,7 +271,7 @@ def run(keep: bool, scale: Scale | None = None) -> int:
                 check(len(before) < p.files, "all files landed before the interruption")
                 print_interrupt(batch)
 
-            completed = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=7200)
+            completed = subprocess.run(command, cwd=REPO_ROOT, stdout=subprocess.PIPE, text=True, timeout=7200)
             batch["exit_codes"].append(completed.returncode)
             check(completed.returncode == 0, f"batch wrapper exited {completed.returncode}; expected verified completion")
             report, manifest, listed = verify_batch(store, layout, before)
@@ -327,6 +327,8 @@ def run(keep: bool, scale: Scale | None = None) -> int:
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     try:
         scale = resolve_scale(os.environ.get("SCALE"))
     except ValueError as exc:
