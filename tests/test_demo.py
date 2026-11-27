@@ -15,6 +15,24 @@ from app.store import Settings
 from app.scenario import resolve_scale
 
 
+@pytest.mark.parametrize("has_reconfigure", [True, False])
+def test_main_configures_stdout_before_running(monkeypatch, has_reconfigure):
+    events = Mock()
+    stdout = SimpleNamespace()
+    if has_reconfigure:
+        stdout.reconfigure = events.reconfigure
+    monkeypatch.setattr(demo.sys, "stdout", stdout)
+    scale = object()
+    monkeypatch.setattr(demo, "resolve_scale", lambda value: scale)
+    monkeypatch.setattr(demo.sys, "argv", ["demo"])
+    events.run.return_value = 0
+    monkeypatch.setattr(demo, "run", events.run)
+
+    assert demo.main() == 0
+    expected = [call.reconfigure(line_buffering=True)] if has_reconfigure else []
+    assert events.mock_calls == expected + [call.run(keep=False, scale=scale)]
+
+
 @pytest.mark.parametrize("entry", ["Versions", "DeleteMarkers", "Uploads"])
 def test_occupied_nonce_prefix_is_refused_before_any_writes(entry, monkeypatch):
     settings = Settings("x", "y", "emulator-bucket", "us-east-1", "https://example.invalid")
@@ -215,9 +233,10 @@ def test_interrupt_uses_shaper_delta_and_poll_interval(monkeypatch):
     shaper = SimpleNamespace(stats=SimpleNamespace(bytes_up=500))
     proc = Mock(returncode=130)
     proc.poll.return_value = None
-    proc.communicate.return_value = ("", "")
+    proc.communicate.return_value = ("", None)
     proc.send_signal.side_effect = lambda sig: setattr(proc.poll, "return_value", 130)
-    monkeypatch.setattr(demo.subprocess, "Popen", lambda *a, **kw: proc)
+    popen = Mock(return_value=proc)
+    monkeypatch.setattr(demo.subprocess, "Popen", popen)
     sleeps = []
 
     def advance(interval):
@@ -226,6 +245,8 @@ def test_interrupt_uses_shaper_delta_and_poll_interval(monkeypatch):
 
     monkeypatch.setattr(demo.time, "sleep", advance)
     assert demo.interrupt_wrapper(["wrapper"], shaper, 100) == (130, 120)
+    assert popen.call_args.kwargs["stdout"] == demo.subprocess.PIPE
+    assert popen.call_args.kwargs.get("stderr") is None
     assert sleeps == [.05, .05]
     proc.send_signal.assert_called_once_with(demo.signal.SIGINT)
 
@@ -338,8 +359,13 @@ def test_multibatch_demo_with_in_memory_storage_and_simulated_wrapper(
                 return 130
 
         monkeypatch.setattr(demo, "interrupt_wrapper", lambda command, shaper, target: (invoke(command, True), target + 1))
-        monkeypatch.setattr(demo.subprocess, "run", lambda command, **kwargs: SimpleNamespace(
-            returncode=invoke(command, False)))
+        def run_wrapper(command, **kwargs):
+            assert not kwargs.get("capture_output", False)
+            assert kwargs["stdout"] == demo.subprocess.PIPE
+            assert kwargs.get("stderr") is None
+            return SimpleNamespace(returncode=invoke(command, False))
+
+        monkeypatch.setattr(demo.subprocess, "run", run_wrapper)
         assert demo.run(keep=keep, scale=scale) == 0
         evidence = json.loads((tmp_path / ".local/verify/demo-evidence-large.json").read_text())
         assert sum(b["interrupted"] for b in evidence["batches"]) == 2

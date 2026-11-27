@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import platform
 import re
+import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -98,6 +100,13 @@ class Ingest:
         """Step 2: rclone copy --checksum. A rerun only sends what is missing or different."""
         log_path = self.log_dir / f"copy-{int(time.time() * 1000)}.log"
         with log_path.open("w", buffering=1) as log:
+            follow_path = log_path.resolve()
+            try:
+                follow_path = follow_path.relative_to(Path.cwd())
+            except ValueError:
+                pass
+            print(f"copy started for {self.layout.site}/{self.layout.batch}; follow its log with:\n"
+                  f"  tail -f {shlex.quote(str(follow_path))}", file=sys.stderr, flush=True)
             proc = self.rclone.popen_copy(self.source, self.layout.landing_prefix)
             try:
                 for line in proc.stdout:
